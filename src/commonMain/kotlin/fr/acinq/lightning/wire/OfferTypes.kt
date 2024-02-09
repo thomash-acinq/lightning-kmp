@@ -5,11 +5,9 @@ import fr.acinq.bitcoin.io.ByteArrayInput
 import fr.acinq.bitcoin.io.ByteArrayOutput
 import fr.acinq.bitcoin.io.Input
 import fr.acinq.bitcoin.io.Output
-import fr.acinq.lightning.CltvExpiryDelta
-import fr.acinq.lightning.Features
+import fr.acinq.lightning.*
 import fr.acinq.lightning.Lightning.randomBytes32
-import fr.acinq.lightning.MilliSatoshi
-import fr.acinq.lightning.ShortChannelId
+import fr.acinq.lightning.NodeId.ShortChannelIdDir
 import fr.acinq.lightning.crypto.RouteBlinding
 import fr.acinq.lightning.utils.Either
 import fr.acinq.lightning.utils.Either.*
@@ -19,77 +17,37 @@ import fr.acinq.lightning.utils.Either.*
  * see https://github.com/lightning/bolts/blob/master/12-offer-encoding.md
  */
 object OfferTypes {
-    data class ShortChannelIdDir(val isNode1: Boolean, val scid: ShortChannelId)
-
     /** Data provided to reach the issuer of an offer or invoice. */
     sealed interface ContactInfo {
         /** If the offer or invoice issuer doesn't want to hide their identity, they can directly share their public nodeId. */
         data class RecipientNodeId(val nodeId: PublicKey) : ContactInfo
 
         /** If the offer or invoice issuer wants to hide their identity, they instead provide blinded paths. */
-        sealed interface BlindedContactInfo : ContactInfo
-        data class BlindedPath(val route: RouteBlinding.BlindedRoute) : BlindedContactInfo
-        data class CompactBlindedPath(
-            val introductionNode: ShortChannelIdDir,
-            val blindingKey: PublicKey,
-            val blindedNodes: List<RouteBlinding.BlindedNode>
-        ) : BlindedContactInfo
+        data class BlindedPath(val route: RouteBlinding.BlindedRoute) : ContactInfo
     }
 
-    fun writePath(path: ContactInfo.BlindedContactInfo, out: Output) {
-        when (path) {
-            is ContactInfo.BlindedPath -> {
-                LightningCodecs.writeBytes(path.route.introductionNodeId.value, out)
-                LightningCodecs.writeBytes(path.route.blindingKey.value, out)
-                LightningCodecs.writeByte(path.route.blindedNodes.size, out)
-                for (node in path.route.blindedNodes) {
-                    LightningCodecs.writeBytes(node.blindedPublicKey.value, out)
-                    LightningCodecs.writeU16(node.encryptedPayload.size(), out)
-                    LightningCodecs.writeBytes(node.encryptedPayload, out)
-                }
-            }
-            is ContactInfo.CompactBlindedPath -> {
-                LightningCodecs.writeByte(if (path.introductionNode.isNode1) 0 else 1, out)
-                LightningCodecs.writeInt64(path.introductionNode.scid.toLong(), out)
-                LightningCodecs.writeBytes(path.blindingKey.value, out)
-                LightningCodecs.writeByte(path.blindedNodes.size, out)
-                for (node in path.blindedNodes) {
-                    LightningCodecs.writeBytes(node.blindedPublicKey.value, out)
-                    LightningCodecs.writeU16(node.encryptedPayload.size(), out)
-                    LightningCodecs.writeBytes(node.encryptedPayload, out)
-                }
-            }
+    fun writePath(path: ContactInfo.BlindedPath, out: Output) {
+        path.route.introductionNodeId.write(out)
+        LightningCodecs.writeBytes(path.route.blindingKey.value, out)
+        LightningCodecs.writeByte(path.route.blindedNodes.size, out)
+        for (node in path.route.blindedNodes) {
+            LightningCodecs.writeBytes(node.blindedPublicKey.value, out)
+            LightningCodecs.writeU16(node.encryptedPayload.size(), out)
+            LightningCodecs.writeBytes(node.encryptedPayload, out)
         }
     }
 
-    fun readPath(input: Input): ContactInfo.BlindedContactInfo {
-        val firstByte = LightningCodecs.byte(input)
-        if (firstByte == 0 || firstByte == 1) {
-            val isNode1 = firstByte == 0
-            val scid = ShortChannelId(LightningCodecs.int64(input))
-            val blindingKey = PublicKey(LightningCodecs.bytes(input, 33))
-            val blindedNodes = ArrayList<RouteBlinding.BlindedNode>()
-            val numBlindedNodes = LightningCodecs.byte(input)
-            for (i in 1 .. numBlindedNodes) {
-                val blindedKey = PublicKey(LightningCodecs.bytes(input, 33))
-                val payload = ByteVector(LightningCodecs.bytes(input, LightningCodecs.u16(input)))
-                blindedNodes.add(RouteBlinding.BlindedNode(blindedKey, payload))
-            }
-            return ContactInfo.CompactBlindedPath(ShortChannelIdDir(isNode1, scid), blindingKey, blindedNodes)
-        } else if (firstByte == 2 || firstByte == 3) {
-            val introductionNodeId = PublicKey(ByteArray(1) { firstByte.toByte() } + LightningCodecs.bytes(input, 32))
-            val blindingKey = PublicKey(LightningCodecs.bytes(input, 33))
-            val blindedNodes = ArrayList<RouteBlinding.BlindedNode>()
-            val numBlindedNodes = LightningCodecs.byte(input)
-            for (i in 1 .. numBlindedNodes) {
-                val blindedKey = PublicKey(LightningCodecs.bytes(input, 33))
-                val payload = ByteVector(LightningCodecs.bytes(input, LightningCodecs.u16(input)))
-                blindedNodes.add(RouteBlinding.BlindedNode(blindedKey, payload))
-            }
-            return ContactInfo.BlindedPath(RouteBlinding.BlindedRoute(introductionNodeId, blindingKey, blindedNodes))
-        } else {
-            throw IllegalArgumentException("unexpected first byte: $firstByte")
+    fun readPath(input: Input): ContactInfo.BlindedPath {
+        val introductionNodeId = NodeId.read(input)
+        val blindingKey = PublicKey(LightningCodecs.bytes(input, 33))
+        val blindedNodes = ArrayList<RouteBlinding.BlindedNode>()
+        val numBlindedNodes = LightningCodecs.byte(input)
+        for (i in 1 .. numBlindedNodes) {
+            val blindedKey = PublicKey(LightningCodecs.bytes(input, 33))
+            val payload = ByteVector(LightningCodecs.bytes(input, LightningCodecs.u16(input)))
+            blindedNodes.add(RouteBlinding.BlindedNode(blindedKey, payload))
         }
+        return ContactInfo.BlindedPath(RouteBlinding.BlindedRoute(introductionNodeId, blindingKey, blindedNodes))
     }
 
     sealed interface Bolt12Tlv : Tlv
@@ -237,7 +195,7 @@ object OfferTypes {
     /**
      * Paths that can be used to retrieve an invoice.
      */
-    data class OfferPaths(val paths: List<ContactInfo.BlindedContactInfo>) : OfferTlv {
+    data class OfferPaths(val paths: List<ContactInfo.BlindedPath>) : OfferTlv {
         override val tag: Long get() = OfferPaths.tag
 
         override fun write(out: Output) {
@@ -249,7 +207,7 @@ object OfferTypes {
         companion object : TlvValueReader<OfferPaths> {
             const val tag: Long = 16
             override fun read(input: Input): OfferPaths {
-                val paths = ArrayList<ContactInfo.BlindedContactInfo>()
+                val paths = ArrayList<ContactInfo.BlindedPath>()
                 while (input.availableBytes > 0) {
                     val path = readPath(input)
                     paths.add(path)
@@ -447,7 +405,7 @@ object OfferTypes {
     /**
      * Payment paths to send the payment to.
      */
-    data class InvoicePaths(val paths: List<ContactInfo.BlindedContactInfo>) : InvoiceTlv {
+    data class InvoicePaths(val paths: List<ContactInfo.BlindedPath>) : InvoiceTlv {
         override val tag: Long get() = InvoicePaths.tag
 
         override fun write(out: Output) {
@@ -459,7 +417,7 @@ object OfferTypes {
         companion object : TlvValueReader<InvoicePaths> {
             const val tag: Long = 160
             override fun read(input: Input): InvoicePaths {
-                val paths = ArrayList<ContactInfo.BlindedContactInfo>()
+                val paths = ArrayList<ContactInfo.BlindedPath>()
                 while (input.availableBytes > 0) {
                     val path = readPath(input)
                     paths.add(path)
@@ -754,7 +712,7 @@ object OfferTypes {
         val description: String = records.get<OfferDescription>()!!.description
         val features: Features = records.get<OfferFeatures>()?.features ?: Features.empty
         val expirySeconds: Long? = records.get<OfferAbsoluteExpiry>()?.absoluteExpirySeconds
-        private val paths: List<ContactInfo.BlindedContactInfo>? = records.get<OfferPaths>()?.paths
+        private val paths: List<ContactInfo.BlindedPath>? = records.get<OfferPaths>()?.paths
         val issuer: String? = records.get<OfferIssuer>()?.issuer
         val quantityMax: Long? = records.get<OfferQuantityMax>()?.max?.let { if (it == 0L) Long.MAX_VALUE else it }
         val nodeId: PublicKey = records.get<OfferNodeId>()!!.publicKey

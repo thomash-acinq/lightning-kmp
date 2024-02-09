@@ -6,6 +6,7 @@ import fr.acinq.bitcoin.PrivateKey
 import fr.acinq.bitcoin.PublicKey
 import fr.acinq.lightning.Lightning.randomBytes32
 import fr.acinq.lightning.Lightning.randomKey
+import fr.acinq.lightning.NodeId
 import fr.acinq.lightning.crypto.RouteBlinding
 import fr.acinq.lightning.crypto.sphinx.Sphinx
 import fr.acinq.lightning.utils.Either
@@ -21,7 +22,7 @@ import kotlin.time.Duration
 class Postman(
     val privateKey: PrivateKey,
     val remoteNodeId: PublicKey,
-    val sendOnionMessage: (nextNodeId: PublicKey, onionMessage: OnionMessage) -> SendMessageError?
+    val sendOnionMessage: (onionMessage: OnionMessage) -> SendMessageError?
 ) {
     private val nodeId = privateKey.publicKey()
 
@@ -50,7 +51,7 @@ class Postman(
                 if (decrypted.value.isLastPacket && subscribed.containsKey(relayInfo.pathId)) {
                     subscribed[relayInfo.pathId]?.send(MessageWithRecipientData(message, relayInfo))
                     subscribed.remove(relayInfo.pathId)
-                } else if (!decrypted.value.isLastPacket && relayInfo.nextNodeId == privateKey.publicKey()) {
+                } else if (!decrypted.value.isLastPacket && relayInfo.nextNodeId == NodeId.Standard(privateKey.publicKey())) {
                     // We may add ourselves to the route several times at the end to hide the real length of the route.
                     processOnionMessage(
                         OnionMessage(
@@ -71,10 +72,14 @@ class Postman(
     }
 
     fun sendMessage(
-        destination: OnionMessages.Destination,
+        recipient: OfferTypes.ContactInfo,
         messageContent: TlvStream<OnionMessagePayloadTlv>,
     ): SendMessageError? {
-        val intermediateNodes = if (destination.introductionNodeId == remoteNodeId) listOf() else listOf(remoteNodeId)
+        val destination: OnionMessages.Destination = when (recipient) {
+            is OfferTypes.ContactInfo.BlindedPath -> OnionMessages.Destination.BlindedPath(recipient.route)
+            is OfferTypes.ContactInfo.RecipientNodeId -> OnionMessages.Destination.Recipient(recipient.nodeId, null)
+        }
+        val intermediateNodes = if (destination.introductionNodeId == NodeId.Standard(remoteNodeId)) listOf() else listOf(remoteNodeId)
         when (val message = OnionMessages.buildMessage(
             privateKey,
             randomKey(),
@@ -87,23 +92,27 @@ class Postman(
                 return SendMessageError(message.value.toString())
             }
             is Right -> {
-                val (nextNodeId, onionMessage) = message.value
-                return sendOnionMessage(nextNodeId, onionMessage)
+                val (_, onionMessage) = message.value
+                return sendOnionMessage(onionMessage)
             }
         }
     }
 
     suspend fun sendMessageExpectingReply(
-        destination: OnionMessages.Destination,
+        recipient: OfferTypes.ContactInfo,
         messageContent: TlvStream<OnionMessagePayloadTlv>,
         minIntermediateHops: Int,
         timeout: Duration
     ): Either<SendMessageError, MessageWithRecipientData?> {
-        val intermediateNodes = if (destination.introductionNodeId == remoteNodeId) listOf() else listOf(remoteNodeId)
+        val destination: OnionMessages.Destination = when (recipient) {
+            is OfferTypes.ContactInfo.BlindedPath -> OnionMessages.Destination.BlindedPath(recipient.route)
+            is OfferTypes.ContactInfo.RecipientNodeId -> OnionMessages.Destination.Recipient(recipient.nodeId, null)
+        }
+        val intermediateNodes = if (destination.introductionNodeId == NodeId.Standard(remoteNodeId)) listOf() else listOf(remoteNodeId)
         val messageId = randomBytes32()
-        val numHopsToAdd = max(0, minIntermediateHops - intermediateNodes.size - 1)
+        val numHopsToAdd = max(0, minIntermediateHops - intermediateNodes.size)
         val intermediateHops =
-            (listOf(destination.introductionNodeId) + intermediateNodes + List(numHopsToAdd) { privateKey.publicKey() }).map {
+            (intermediateNodes + List(numHopsToAdd) { privateKey.publicKey() }).map {
                 OnionMessages.IntermediateNode(it)
             }
         val lastHop = OnionMessages.Destination.Recipient(nodeId, messageId)
@@ -120,10 +129,10 @@ class Postman(
                 Left(SendMessageError(message.value.toString()))
             }
             is Right -> {
-                val (nextNodeId, onionMessage) = message.value
+                val (_, onionMessage) = message.value
                 val channel = Channel<MessageWithRecipientData>()
                 subscribed[messageId] = channel
-                val sendMessageError = sendOnionMessage(nextNodeId, onionMessage)
+                val sendMessageError = sendOnionMessage(onionMessage)
                 if(sendMessageError == null){
                     val response = withTimeoutOrNull(timeout) { channel.receive() }
                     if (response == null) {

@@ -5,12 +5,9 @@ import fr.acinq.bitcoin.io.ByteArrayInput
 import fr.acinq.bitcoin.io.ByteArrayOutput
 import fr.acinq.bitcoin.io.Input
 import fr.acinq.bitcoin.io.Output
-import fr.acinq.lightning.Feature
-import fr.acinq.lightning.FeatureSupport
-import fr.acinq.lightning.Features
+import fr.acinq.lightning.*
 import fr.acinq.lightning.Lightning.randomBytes32
 import fr.acinq.lightning.Lightning.randomKey
-import fr.acinq.lightning.ShortChannelId
 import fr.acinq.lightning.crypto.RouteBlinding
 import fr.acinq.lightning.tests.utils.LightningTestSuite
 import fr.acinq.lightning.utils.msat
@@ -30,7 +27,6 @@ import fr.acinq.lightning.wire.OfferTypes.OfferDescription
 import fr.acinq.lightning.wire.OfferTypes.OfferIssuer
 import fr.acinq.lightning.wire.OfferTypes.OfferNodeId
 import fr.acinq.lightning.wire.OfferTypes.OfferQuantityMax
-import fr.acinq.lightning.wire.OfferTypes.ShortChannelIdDir
 import fr.acinq.lightning.wire.OfferTypes.Signature
 import fr.acinq.lightning.wire.OfferTypes.readPath
 import fr.acinq.lightning.wire.OfferTypes.removeSignature
@@ -296,17 +292,17 @@ class OfferTypesTestsCommon : LightningTestSuite() {
 
     @Test
     fun `compact blinded route`() {
-        data class TestCase(val encoded: ByteVector, val decoded: BlindedContactInfo)
+        data class TestCase(val encoded: ByteVector, val decoded: BlindedPath)
 
         val testCases = listOf(
             TestCase(ByteVector.fromHex("00 00000000000004d2 0379b470d00b78ded936f8972a0f3ecda2bb6e6df40dcd581dbaeb3742b30008ff 01 02fba71b72623187dd24670110eec870e28b848f255ba2edc0486d3a8e89ec44b7 0002 1dea"),
-                CompactBlindedPath(ShortChannelIdDir(isNode1 = true, ShortChannelId(1234)), PublicKey.fromHex("0379b470d00b78ded936f8972a0f3ecda2bb6e6df40dcd581dbaeb3742b30008ff"), listOf(RouteBlinding.BlindedNode(PublicKey.fromHex("02fba71b72623187dd24670110eec870e28b848f255ba2edc0486d3a8e89ec44b7"), ByteVector.fromHex("1dea"))))),
+                BlindedPath(RouteBlinding.BlindedRoute(NodeId.ShortChannelIdDir(isNode1 = true, ShortChannelId(1234)), PublicKey.fromHex("0379b470d00b78ded936f8972a0f3ecda2bb6e6df40dcd581dbaeb3742b30008ff"), listOf(RouteBlinding.BlindedNode(PublicKey.fromHex("02fba71b72623187dd24670110eec870e28b848f255ba2edc0486d3a8e89ec44b7"), ByteVector.fromHex("1dea")))))),
             TestCase(ByteVector.fromHex("01 000000000000ddd5 0353a081bb02d6e361be3df3e92b41b788ca65667f6ea0c01e2bfa03664460ef86 01 03bce3f0cdb4172caac82ec8a9251eb35df1201bdcb977c5a03f3624ec4156a65f 0003 c0ffee"),
-                CompactBlindedPath(ShortChannelIdDir(isNode1 = false, ShortChannelId(56789)), PublicKey.fromHex("0353a081bb02d6e361be3df3e92b41b788ca65667f6ea0c01e2bfa03664460ef86"), listOf(RouteBlinding.BlindedNode(PublicKey.fromHex("03bce3f0cdb4172caac82ec8a9251eb35df1201bdcb977c5a03f3624ec4156a65f"), ByteVector.fromHex("c0ffee"))))),
+                BlindedPath(RouteBlinding.BlindedRoute(NodeId.ShortChannelIdDir(isNode1 = false, ShortChannelId(56789)), PublicKey.fromHex("0353a081bb02d6e361be3df3e92b41b788ca65667f6ea0c01e2bfa03664460ef86"), listOf(RouteBlinding.BlindedNode(PublicKey.fromHex("03bce3f0cdb4172caac82ec8a9251eb35df1201bdcb977c5a03f3624ec4156a65f"), ByteVector.fromHex("c0ffee")))))),
             TestCase(ByteVector.fromHex("022d3b15cea00ee4a8e710b082bef18f0f3409cc4e7aff41c26eb0a4d3ab20dd73 0379a3b6e4bceb7519d09db776994b1f82cf6a9fa4d3ec2e52314c5938f2f9f966 01 02b446aaa523df82a992ab468e5298eabb6168e2c466455c210d8c97dbb8981328 0002 cafe"),
-                BlindedPath(RouteBlinding.BlindedRoute(PublicKey.fromHex("022d3b15cea00ee4a8e710b082bef18f0f3409cc4e7aff41c26eb0a4d3ab20dd73"), PublicKey.fromHex("0379a3b6e4bceb7519d09db776994b1f82cf6a9fa4d3ec2e52314c5938f2f9f966"), listOf(RouteBlinding.BlindedNode(PublicKey.fromHex("02b446aaa523df82a992ab468e5298eabb6168e2c466455c210d8c97dbb8981328"), ByteVector.fromHex("cafe")))))),
+                BlindedPath(RouteBlinding.BlindedRoute(NodeId.Standard(PublicKey.fromHex("022d3b15cea00ee4a8e710b082bef18f0f3409cc4e7aff41c26eb0a4d3ab20dd73")), PublicKey.fromHex("0379a3b6e4bceb7519d09db776994b1f82cf6a9fa4d3ec2e52314c5938f2f9f966"), listOf(RouteBlinding.BlindedNode(PublicKey.fromHex("02b446aaa523df82a992ab468e5298eabb6168e2c466455c210d8c97dbb8981328"), ByteVector.fromHex("cafe")))))),
             TestCase(ByteVector.fromHex("03ba3c458e3299eb19d2e07ae86453f4290bcdf8689707f0862f35194397c45922 028aa5d1a10463d598a0a0ab7296af21619049f94fe03ef664a87561009e58c3dd 01 02988d7381d0434cfebbe521031505fb9987ae6cefd0bab0e5927852eb96bb6cc2 0003 ec1a13"),
-                BlindedPath(RouteBlinding.BlindedRoute(PublicKey.fromHex("03ba3c458e3299eb19d2e07ae86453f4290bcdf8689707f0862f35194397c45922"), PublicKey.fromHex("028aa5d1a10463d598a0a0ab7296af21619049f94fe03ef664a87561009e58c3dd"), listOf(RouteBlinding.BlindedNode(PublicKey.fromHex("02988d7381d0434cfebbe521031505fb9987ae6cefd0bab0e5927852eb96bb6cc2"), ByteVector.fromHex("ec1a13")))))),
+                BlindedPath(RouteBlinding.BlindedRoute(NodeId.Standard(PublicKey.fromHex("03ba3c458e3299eb19d2e07ae86453f4290bcdf8689707f0862f35194397c45922")), PublicKey.fromHex("028aa5d1a10463d598a0a0ab7296af21619049f94fe03ef664a87561009e58c3dd"), listOf(RouteBlinding.BlindedNode(PublicKey.fromHex("02988d7381d0434cfebbe521031505fb9987ae6cefd0bab0e5927852eb96bb6cc2"), ByteVector.fromHex("ec1a13")))))),
         )
 
         testCases.forEach {

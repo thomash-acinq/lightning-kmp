@@ -1159,15 +1159,11 @@ class Peer(
         }
     }
 
-    fun sendOnionMessage(nextNodeId: PublicKey, onionMessage: OnionMessage): Postman.SendMessageError? {
-        return if (nextNodeId == remoteNodeId) {
-            if(peerConnection?.send(onionMessage) == null){
-                Postman.SendMessageError("Not connected to peer")
-            } else {
-                null
-            }
+    fun sendOnionMessage(onionMessage: OnionMessage): Postman.SendMessageError? {
+        return if(peerConnection?.send(onionMessage) == null){
+            Postman.SendMessageError("Not connected to peer")
         } else {
-            Postman.SendMessageError("Invalid next node id")
+            null
         }
     }
 }
