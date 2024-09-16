@@ -12,6 +12,7 @@ import fr.acinq.lightning.channel.states.*
 import fr.acinq.lightning.crypto.noise.*
 import fr.acinq.lightning.db.*
 import fr.acinq.lightning.payment.*
+import fr.acinq.lightning.message.Postman
 import fr.acinq.lightning.serialization.Encryption.from
 import fr.acinq.lightning.serialization.Serialization.DeserializationResult
 import fr.acinq.lightning.transactions.Transactions
@@ -69,7 +70,7 @@ object Disconnected : PeerCommand()
 sealed class PaymentCommand : PeerCommand()
 private object CheckPaymentsTimeout : PaymentCommand()
 data class PayToOpenResponseCommand(val payToOpenResponse: PayToOpenResponse) : PeerCommand()
-data class SendPayment(val paymentId: UUID, val amount: MilliSatoshi, val recipient: PublicKey, val paymentRequest: PaymentRequest, val trampolineFeesOverride: List<TrampolineFees>? = null) : PaymentCommand() {
+data class SendPayment(val paymentId: UUID, val amount: MilliSatoshi, val recipient: PublicKey, val paymentRequest: Bolt11Invoice, val trampolineFeesOverride: List<TrampolineFees>? = null) : PaymentCommand() {
     val paymentHash: ByteVector32 = paymentRequest.paymentHash
 }
 
@@ -196,6 +197,8 @@ class Peer(
     val swapInAddress: String = nodeParams.keyManager.swapInOnChainWallet.address.also { swapInWallet.addAddress(it) }
 
     private var swapInJob: Job? = null
+
+    private val postman = Postman(nodeParams.nodePrivateKey, ::sendOnionMessage)
 
     init {
         logger.info { "initializing peer" }
@@ -613,7 +616,7 @@ class Peer(
             }
     }
 
-    suspend fun createInvoice(paymentPreimage: ByteVector32, amount: MilliSatoshi?, description: Either<String, ByteVector32>, expirySeconds: Long? = null): PaymentRequest {
+    suspend fun createInvoice(paymentPreimage: ByteVector32, amount: MilliSatoshi?, description: Either<String, ByteVector32>, expirySeconds: Long? = null): Bolt11Invoice {
         // we add one extra hop which uses a virtual channel with a "peer id", using the highest remote fees and expiry across all
         // channels to maximize the likelihood of success on the first payment attempt
         val remoteChannelUpdates = _channels.values.mapNotNull { channelState ->
@@ -626,7 +629,7 @@ class Peer(
         }
         val extraHops = listOf(
             listOf(
-                PaymentRequest.TaggedField.ExtraHop(
+                Bolt11Invoice.TaggedField.ExtraHop(
                     nodeId = walletParams.trampolineNode.id,
                     shortChannelId = ShortChannelId.peerId(nodeParams.nodeId),
                     feeBase = remoteChannelUpdates.maxOfOrNull { it.feeBaseMsat } ?: walletParams.invoiceDefaultRoutingFees.feeBase,
@@ -1066,7 +1069,7 @@ class Peer(
                     }
                     is OnionMessage -> {
                         logger.info { "received ${msg::class.simpleName}" }
-                        // TODO: process onion message
+                        postman.processOnionMessage(msg)
                     }
                 }
             }
@@ -1210,6 +1213,18 @@ class Peer(
                     }
                 }
             }
+        }
+    }
+
+    fun sendOnionMessage(nextNodeId: PublicKey, onionMessage: OnionMessage): Postman.SendMessageError? {
+        return if (nextNodeId == remoteNodeId) {
+            if(peerConnection?.send(onionMessage) == null){
+                Postman.SendMessageError("Not connected to peer")
+            } else {
+                null
+            }
+        } else {
+            Postman.SendMessageError("Invalid next node id")
         }
     }
 }
